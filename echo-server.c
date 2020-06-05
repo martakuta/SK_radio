@@ -152,7 +152,7 @@ int main(int argc, char *argv[]) {
 						
 						printf("want to get KEEPALIVE msg\n");
 						struct timeval timeout;      
-    					timeout.tv_sec = 4;
+    					timeout.tv_sec = 5;
 						timeout.tv_usec = 0;
 
 						if (setsockopt (sock, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout,

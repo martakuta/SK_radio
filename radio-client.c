@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <arpa/inet.h>
+#include <time.h>
 #include "err.h"
 
 #define BUFFER_SIZE   1000
@@ -21,7 +22,7 @@ typedef struct list {
     uint16_t port;
 } list;
 
-static char* menuBegin = "\n\n   MENU\n\n 1. Szukaj pośrednika\n";
+static char* menuBegin = "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n   MENU\n\n 1. Szukaj pośrednika\n";
 static char* menuEnd = "\n Podaj numer opcji, którą chcesz wybrać: ";
 static char* notCorrect = "\n Podaj poprawną wartość: ";
 
@@ -124,8 +125,6 @@ struct sockaddr_in createTelnetSock(int* sockTelnet, int portTelnet) {
     if (listen(*sockTelnet, QUEUE_LENGTH) < 0)
         syserr("listen");
 
-    printf("accepting client connections on port %hu\n", ntohs(myAddressTelnet.sin_port));
-
     return myAddressTelnet;
 }
 
@@ -214,7 +213,6 @@ struct list* receiveIAMmsgs(struct sockaddr_in RPServerAddress, int sockRP) {
         for (size_t i = 0; i <= list->length; i++) {
             list->data[i] = buffer[i+4];
         }
-        printf("found a radio: %s\n", list->data);
 
         if (begin == NULL) {
             begin = list;
@@ -230,11 +228,11 @@ struct list* receiveIAMmsgs(struct sockaddr_in RPServerAddress, int sockRP) {
     return begin;
 }
 
-char* receiveAUDIOandMETADATAmsgs(struct sockaddr_in RPServerAddress, int radioSock, int msgTelnetSock) {
+char* receiveAUDIOandMETADATAmsgs(time_t* lastActivityTime, struct sockaddr_in RPServerAddress, int radioSock, int msgTelnetSock) {
     
     struct timeval timeout;      
-    timeout.tv_sec = 2;
-    timeout.tv_usec = 000;
+    timeout.tv_sec = 3;
+    timeout.tv_usec = 500;
 
     if (setsockopt (radioSock, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout,
                 sizeof(timeout)) < 0)
@@ -256,6 +254,7 @@ char* receiveAUDIOandMETADATAmsgs(struct sockaddr_in RPServerAddress, int radioS
         } else if (rcv_len < 0) {
             syserr("receive message from socket");
         }
+        *lastActivityTime = time(NULL);
 
         uint16_t type = ntohs(((int)buffer[0] << 8) + (int)buffer[1]);
         uint16_t length = ntohs(((int)buffer[2] << 8) + (int)buffer[3]);
@@ -267,13 +266,12 @@ char* receiveAUDIOandMETADATAmsgs(struct sockaddr_in RPServerAddress, int radioS
 
         if (type == 4) {
             // wypisz AUDIO na standardowe wejście
-            printf("AUDIO: %s\n", buffer);
+            printf("%s", buffer);
         }
         else if (type == 5) {
             // zapisz najnowsze metadane
             (void) memset(metadata, 0, BUFFER_SIZE);
             snprintf(metadata, BUFFER_SIZE, "%s", buffer);
-            printf("METADATA: %s\n", metadata);
         }
     }
     
@@ -373,23 +371,20 @@ int getSelectedOption(int msgTelnetSock, int check) {
     return num;
 }
 
-void reactOnSelectedOption(int option, int howManyFoundRadios, struct list* foundRadios, int sockRP, int msgTelnetSock, struct sockaddr_in myAddressRP, struct sockaddr_in RPServerAddress) {
+void reactOnSelectedOption(int option, int howManyFoundRadios, struct list* foundRadios, int sockRP, int msgTelnetSock, struct sockaddr_in myAddressRP, struct sockaddr_in RPServerAddress, int timeout) {
     char* metadata = "";
-    printf("option %d has been selected\n", option);
     
     if (option == 1) {
         // szukaj dostępnych radio
         int howMany = 0;
         char* discoverMsg = createMessage(1, 0);
         foundRadios = lookForRadioProxy(&howMany, sockRP, msgTelnetSock, discoverMsg, myAddressRP, RPServerAddress);
-        printf("found %d radios\n", howMany);
         option = getSelectedOption(msgTelnetSock, 0);
-        reactOnSelectedOption(option, howMany, foundRadios, sockRP, msgTelnetSock, myAddressRP, RPServerAddress);
+        reactOnSelectedOption(option, howMany, foundRadios, sockRP, msgTelnetSock, myAddressRP, RPServerAddress, timeout);
         return;
     }
     else if (option == 2 + howManyFoundRadios) {
         // zakończ połączenie z telnetem
-        printf("ending connection\n");
         if (close(msgTelnetSock) < 0)
             syserr("close");
         return;
@@ -403,7 +398,7 @@ void reactOnSelectedOption(int option, int howManyFoundRadios, struct list* foun
         if (snd_len != len)
             syserr("writing to client socket");
         option = getSelectedOption(msgTelnetSock, 0);
-        reactOnSelectedOption(option, howManyFoundRadios, foundRadios, sockRP, msgTelnetSock, myAddressRP, RPServerAddress);
+        reactOnSelectedOption(option, howManyFoundRadios, foundRadios, sockRP, msgTelnetSock, myAddressRP, RPServerAddress, timeout);
         return;
     } 
     else {
@@ -414,7 +409,6 @@ void reactOnSelectedOption(int option, int howManyFoundRadios, struct list* foun
             radio = radio->next;
             i--;
         }
-        printf("connect with radio: %s on host: %s:%d\n", radio->data, radio->hostname, radio->port);
         int radioSock;
         struct sockaddr_in myAddressRP = createRPSock(&radioSock, radio->hostname, radio->port);
         // wyślij discover
@@ -423,26 +417,31 @@ void reactOnSelectedOption(int option, int howManyFoundRadios, struct list* foun
         int howMany = 0;
         createAndSendMenu(foundRadios, option, &howMany, msgTelnetSock, "");
         char* keepAliveMsg = createMessage(3,0);
+        time_t lastActivityTime = time(NULL), currentTime = time(NULL);
             
         for (;;) {
             // wyślij keepAlive (jeśli minęło 3,5s)
             sendMsg(radioSock, keepAliveMsg, myAddressRP);
             // pobierz porcję danych audio / metadanych i prześlij ją użytkownikowi
-            char* newMetadata = receiveAUDIOandMETADATAmsgs(RPServerAddress, radioSock, msgTelnetSock);
+            char* newMetadata = receiveAUDIOandMETADATAmsgs(&lastActivityTime, RPServerAddress, radioSock, msgTelnetSock);
             if(strlen(newMetadata) > 0)
                 metadata = newMetadata;
+            currentTime = time(NULL);
+            if (currentTime - lastActivityTime > timeout) {
+                option = 1;
+                break;
+            }
             //zaktualizuj menu, dodaj do niego najnowsze metadane
             howMany = 0;
             createAndSendMenu(foundRadios, option, &howMany, msgTelnetSock, metadata);
             // sprawdź czy nie ma nowej wiadomości od telnetu, jeśli tak wyskakuj z pętli
             int newOption = getSelectedOption(msgTelnetSock, 1);
-            printf("newOption: %d\n", newOption);
             if (newOption != 0) {
                 option = newOption;
                 break;
             }
         }
-        reactOnSelectedOption(option, howManyFoundRadios, foundRadios, sockRP, msgTelnetSock, myAddressRP, RPServerAddress);
+        reactOnSelectedOption(option, howManyFoundRadios, foundRadios, sockRP, msgTelnetSock, myAddressRP, RPServerAddress, timeout);
         return;
     }
 }
@@ -462,13 +461,13 @@ int main(int argc, char *argv[]) {
     struct sockaddr_in telnetClientAddress;
 
     struct sockaddr_in myAddressRP = createRPSock(&sockRP, hostRP, portRP);
-    struct sockaddr_in myAddressTelnet = createTelnetSock(&sockTelnet, portTelnet);
+    createTelnetSock(&sockTelnet, portTelnet);
     
     for (;;) {
         telnetClientAddress = connectAndMenuStart(telnetClientAddress, sockTelnet, &msgTelnetSock);
         
         int option = getSelectedOption(msgTelnetSock, 0);
-        reactOnSelectedOption(option, 0, NULL, sockRP, msgTelnetSock, myAddressRP, RPServerAddress);
+        reactOnSelectedOption(option, 0, NULL, sockRP, msgTelnetSock, myAddressRP, RPServerAddress, timeout);
     }
 
 
