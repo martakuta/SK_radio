@@ -37,7 +37,7 @@ int string2int(char* s) {
     return answer;
 }
 
-int checkParams(int argc, char *argv[], char** hostRP, int* portRP, int* portTelnet, int* timeout) {
+int checkParams(int argc, char* argv[], char** hostRP, int* portRP, int* portTelnet, int* timeout) {
 
     int presentHostRP = 0, presentPortRP = 0, presentPortTelnet = 0, presentTimeout = 0;
 
@@ -46,16 +46,16 @@ int checkParams(int argc, char *argv[], char** hostRP, int* portRP, int* portTel
     }
 
     for (int i = 1; i < argc; i += 2) {
-        if (strcmp(argv[i], "-H") == 0) {
+        if (strncmp(argv[i], "-H", 3) == 0) {
             *hostRP = argv[i+1];
             presentHostRP = 1;
-        } else if (strcmp(argv[i], "-P") == 0) {
+        } else if (strncmp(argv[i], "-P", 3) == 0) {
             *portRP = string2int(argv[i+1]);
             presentPortRP = 1;
-        } else if (strcmp(argv[i], "-p") == 0) {
+        } else if (strncmp(argv[i], "-p", 3) == 0) {
             *portTelnet = string2int(argv[i+1]);
             presentPortTelnet = 1;
-        } else if (strcmp(argv[i], "-T") == 0 || strcmp(argv[i], "-t") == 0) {
+        } else if (strncmp(argv[i], "-T", 3) == 0 || strncmp(argv[i], "-t", 3) == 0) {
             *timeout = string2int(argv[i+1]);
             presentTimeout = 1;
             if (*timeout == 0) {
@@ -451,7 +451,7 @@ int main(int argc, char *argv[]) {
     int portRP, portTelnet, timeout = 5;
     
     if (checkParams(argc, argv, &hostRP, &portRP, &portTelnet, &timeout) == 1) {
-        printf("Uzycie: %s -H [adres na ktorym nasluchuje radio-proxy] -P [port UDP na ktorym nasluchuje radio-proxy] -p [port TCP na ktory mozna podlaczyc sie przez telnet -T [timeout w sekundach, opcjonalny]\n", argv[0]);
+        printf("Uzycie: %s -H [adres na ktorym nasluchuje radio-proxy] -P [port UDP na ktorym nasluchuje radio-proxy] -p [port TCP na ktory mozna podlaczyc sie przez telnet] -T [timeout w sekundach, opcjonalny]\n", argv[0]);
         return 1;
     }
 
