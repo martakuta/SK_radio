@@ -9,7 +9,7 @@
 #include <time.h>
 #include "err.h"
 
-#define BUFFER_SIZE   1000
+#define BUFFER_SIZE   100000
 #define QUEUE_LENGTH     5
 #define PORT_NUM     10001
 
@@ -178,7 +178,7 @@ struct list* receiveIAMmsgs(struct sockaddr_in RPServerAddress, int sockRP) {
     
     struct timeval timeout;      
     timeout.tv_sec = 0;
-    timeout.tv_usec = 500;
+    timeout.tv_usec = 200000;
 
     if (setsockopt (sockRP, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout,
                 sizeof(timeout)) < 0)
@@ -203,7 +203,7 @@ struct list* receiveIAMmsgs(struct sockaddr_in RPServerAddress, int sockRP) {
         uint16_t type = ntohs(((int)buffer[0] << 8) + (int)buffer[1]);
         if (type != 2) // interesują mnie teraz wyłącznie wiadomości typu IAM
             continue;
-
+        fprintf(stderr, "got iam msg\n");
         struct list* list = malloc(sizeof(struct list));
         list->next = NULL;
         list->hostname = inet_ntoa(RPServerAddress.sin_addr);
@@ -244,8 +244,9 @@ char* receiveAUDIOandMETADATAmsgs(time_t* lastActivityTime, struct sockaddr_in R
     int flags = 0;
 
     char* metadata = malloc(BUFFER_SIZE*sizeof(char));
+    time_t beginTime = time(NULL);
 
-    while (1) {
+    while (time(NULL) - beginTime < 3) {
         (void) memset(buffer, 0, len);
         ssize_t rcv_len = recvfrom(radioSock, buffer, len, flags,
             (struct sockaddr *) &RPServerAddress, &addressLen);
@@ -258,7 +259,7 @@ char* receiveAUDIOandMETADATAmsgs(time_t* lastActivityTime, struct sockaddr_in R
 
         uint16_t type = ntohs(((int)buffer[0] << 8) + (int)buffer[1]);
         uint16_t length = ntohs(((int)buffer[2] << 8) + (int)buffer[3]);
-        for (size_t i = 0; i <= length; i++) {
+        for (size_t i = 0; i < length; i++) {
             buffer[i] = buffer[i+4];
         }
         if (type != 4 && type != 5)
@@ -266,14 +267,19 @@ char* receiveAUDIOandMETADATAmsgs(time_t* lastActivityTime, struct sockaddr_in R
 
         if (type == 4) {
             // wypisz AUDIO na standardowe wejście
-            printf("%s", buffer);
+            //fprintf(stderr, "got audio msg %d\n", length);
+            for (int i = 0; i < length; i++) {
+                printf("%c", buffer[i]);
+            }
         }
         else if (type == 5) {
             // zapisz najnowsze metadane
+            fprintf(stderr, "got metadata msg\n");
             (void) memset(metadata, 0, BUFFER_SIZE);
             snprintf(metadata, BUFFER_SIZE, "%s", buffer);
         }
     }
+    fprintf(stderr, "3s\n");
     
     return metadata;
 }
@@ -319,11 +325,9 @@ void createAndSendMenu(struct list* msgs, int selectedItem, int* howMany, int ms
 }
 
 struct list* lookForRadioProxy(int* howMany, int sockRP, int msgTelnetSock, char* discoverMsg, struct sockaddr_in myAddressRP, struct sockaddr_in RPServerAddress) {
-    
     // wyślij DISCOVER do wszystkich i zbierz od nich odpowiedzi
     if (sendMsg(sockRP, discoverMsg, myAddressRP) == 1)
         syserr("sending DISCOVER");
-
     struct list* msgs = receiveIAMmsgs(RPServerAddress, sockRP);
     struct list* begin = msgs;
 
@@ -422,6 +426,7 @@ void reactOnSelectedOption(int option, int howManyFoundRadios, struct list* foun
         for (;;) {
             // wyślij keepAlive (jeśli minęło 3,5s)
             sendMsg(radioSock, keepAliveMsg, myAddressRP);
+            fprintf(stderr, "sent keepalive msg\n");
             // pobierz porcję danych audio / metadanych i prześlij ją użytkownikowi
             char* newMetadata = receiveAUDIOandMETADATAmsgs(&lastActivityTime, RPServerAddress, radioSock, msgTelnetSock);
             if(strlen(newMetadata) > 0)
